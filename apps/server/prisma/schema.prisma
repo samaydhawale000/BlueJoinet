@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CallType {
+  AUDIO
+  VIDEO
+}
+
+enum CallStatus {
+  INITIATED
+  RINGING
+  ACCEPTED
+  REJECTED
+  MISSED
+  ENDED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  refreshTokenHash String?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  projects     Project[]
+}
+
+model Project {
+  id          String   @id @default(uuid())
+
+  name        String
+
+  description String?
+
+  ownerId     String
+
+  owner User @relation(fields: [ownerId],references: [id])
+
+  apiKeys ApiKey[]
+
+  calls Call[]
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+}
+
+model ApiKey {
+  id String @id @default(uuid())
+
+  key String @unique
+
+  name String
+
+  projectId String
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+}
+
+model Call {
+  id String @id @default(uuid())
+
+  projectId String
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  callerId String
+
+  receiverId String
+
+  type CallType
+
+  status CallStatus @default(INITIATED)
+
+  startedAt DateTime?
+
+  endedAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  updatedAt DateTime @updatedAt
+
+  events CallEvent[]
+
+  session CallSession?
+}
+
+model CallEvent {
+  id String @id @default(uuid())
+
+  callId String
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  event String
+
+  metadata Json?
+
+  createdAt DateTime @default(now())
+}
+
+model CallSession {
+  id String @id @default(uuid())
+
+  callId String @unique
+
+  call Call @relation(fields: [callId], references: [id], onDelete: Cascade)
+
+  callerToken String @unique
+  receiverToken String @unique
+
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+}
