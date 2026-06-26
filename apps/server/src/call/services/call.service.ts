@@ -96,6 +96,12 @@ export class CallService {
     return updated;
   }
 
+  async getCall(callId: string) {
+    const call = await this.prisma.call.findUnique({ where: { id: callId } });
+    if (!call) throw new NotFoundException('Call not found');
+    return call;
+  }
+
   async getCalls(projectId: string) {
     return this.prisma.call.findMany({
       where: { projectId },
