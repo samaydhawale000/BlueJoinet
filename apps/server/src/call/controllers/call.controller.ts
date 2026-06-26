@@ -13,7 +13,7 @@ import { ApiKeyGuard } from '../../common/guards/api-key.guard';
 
 import { CallService } from '../services/call.service';
 
-import { CreateCallDto } from '../ dto/create-call.dto';
+import { CreateCallDto } from '../dto/create-call.dto';
 
 @Controller('calls')
 @UseGuards(ApiKeyGuard)

@@ -27,26 +27,6 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  private getAuthenticatedParticipant(socketId: string) {
-    for (const participant of this.authenticatedSockets.values()) {
-      if (participant.socketId === socketId) {
-        return participant;
-      }
-    }
-
-    return null;
-  }
-
-  private getParticipantBySocketId(socketId: string) {
-    for (const participant of this.authenticatedSockets.values()) {
-      if (participant.socketId === socketId) {
-        return participant;
-      }
-    }
-
-    return null;
-  }
-
   private authenticatedSockets = new Map<
     string,
     {
@@ -56,6 +36,44 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       token: string;
     }
   >();
+
+  private getParticipantBySocketId(socketId: string) {
+    for (const participant of this.authenticatedSockets.values()) {
+      if (participant.socketId === socketId) {
+        return participant;
+      }
+    }
+    return null;
+  }
+
+  private getOtherParticipant(senderSocketId: string) {
+    const sender = this.getParticipantBySocketId(senderSocketId);
+    if (!sender) return null;
+
+    for (const participant of this.authenticatedSockets.values()) {
+      if (
+        participant.callId === sender.callId &&
+        participant.socketId !== senderSocketId
+      ) {
+        return participant;
+      }
+    }
+    return null;
+  }
+
+  emitToParticipant(
+    callId: string,
+    role: 'CALLER' | 'RECEIVER',
+    event: string,
+    data: any,
+  ) {
+    for (const participant of this.authenticatedSockets.values()) {
+      if (participant.callId === callId && participant.role === role) {
+        this.server.to(participant.socketId).emit(event, data);
+        return;
+      }
+    }
+  }
 
   handleConnection(client: Socket) {
     console.log('Socket Connected:', client.id);
@@ -70,7 +88,6 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.authenticatedSockets.delete(token);
       }
     }
-
     console.log('Socket Disconnected:', client.id);
   }
 
@@ -94,10 +111,7 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         token: body.token,
       });
 
-      return {
-        success: true,
-        role: 'CALLER',
-      };
+      return { success: true, role: 'CALLER' };
     }
 
     const receiver = await this.callSessionService.getByReceiverToken(
@@ -112,34 +126,16 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
         token: body.token,
       });
 
-      return {
-        success: true,
-        role: 'RECEIVER',
-      };
+      client.emit('incoming-call', {
+        callId: receiver.call.id,
+        callerId: receiver.call.callerId,
+        type: receiver.call.type,
+      });
+
+      return { success: true, role: 'RECEIVER' };
     }
 
-    return {
-      success: false,
-    };
-  }
-
-  private getOtherParticipant(senderSocketId: string) {
-    const sender = this.getParticipantBySocketId(senderSocketId);
-
-    if (!sender) {
-      return null;
-    }
-
-    for (const participant of this.authenticatedSockets.values()) {
-      if (
-        participant.callId === sender.callId &&
-        participant.socketId !== senderSocketId
-      ) {
-        return participant;
-      }
-    }
-
-    return null;
+    return { success: false };
   }
 
   @SubscribeMessage('offer')
@@ -152,21 +148,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       offer: RTCSessionDescriptionInit;
     },
   ) {
-    const sender = this.getParticipantBySocketId(client.id);
-
-    if (!sender) {
-      return;
-    }
-
     const target = this.getOtherParticipant(client.id);
-
-    if (!target) {
-      return;
-    }
-
-    this.server.to(target.socketId).emit('offer', {
-      offer: body.offer,
-    });
+    if (!target) return;
+    this.server.to(target.socketId).emit('offer', { offer: body.offer });
   }
 
   @SubscribeMessage('answer')
@@ -179,21 +163,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       answer: RTCSessionDescriptionInit;
     },
   ) {
-    const sender = this.getParticipantBySocketId(client.id);
-
-    if (!sender) {
-      return;
-    }
-
     const target = this.getOtherParticipant(client.id);
-
-    if (!target) {
-      return;
-    }
-
-    this.server.to(target.socketId).emit('answer', {
-      answer: body.answer,
-    });
+    if (!target) return;
+    this.server.to(target.socketId).emit('answer', { answer: body.answer });
   }
 
   @SubscribeMessage('ice-candidate')
@@ -206,21 +178,11 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       candidate: RTCIceCandidateInit;
     },
   ) {
-    const sender = this.getParticipantBySocketId(client.id);
-
-    if (!sender) {
-      return;
-    }
-
     const target = this.getOtherParticipant(client.id);
-
-    if (!target) {
-      return;
-    }
-
-    this.server.to(target.socketId).emit('ice-candidate', {
-      candidate: body.candidate,
-    });
+    if (!target) return;
+    this.server
+      .to(target.socketId)
+      .emit('ice-candidate', { candidate: body.candidate });
   }
 
   @SubscribeMessage('call-ended')
@@ -228,18 +190,8 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket()
     client: Socket,
   ) {
-    const sender = this.getParticipantBySocketId(client.id);
-
-    if (!sender) {
-      return;
-    }
-
     const target = this.getOtherParticipant(client.id);
-
-    if (!target) {
-      return;
-    }
-
+    if (!target) return;
     this.server.to(target.socketId).emit('call-ended');
   }
 
@@ -253,36 +205,23 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
       callId: string;
     },
   ) {
-    const participant = this.getAuthenticatedParticipant(client.id);
+    const participant = this.getParticipantBySocketId(client.id);
 
     if (!participant) {
-      return {
-        success: false,
-        error: 'Not authenticated',
-      };
+      return { success: false, error: 'Not authenticated' };
     }
 
     if (participant.callId !== body.callId) {
-      return {
-        success: false,
-        error: 'Call access denied',
-      };
+      return { success: false, error: 'Call access denied' };
     }
 
     client.join(body.callId);
-
     this.roomService.joinRoom(body.callId, client.id);
 
     const count = this.roomService.getParticipantCount(body.callId);
+    this.server.to(body.callId).emit('participant-joined', { participants: count });
 
-    this.server.to(body.callId).emit('participant-joined', {
-      participants: count,
-    });
-
-    return {
-      success: true,
-      participants: count,
-    };
+    return { success: true, participants: count };
   }
 
   @SubscribeMessage('leave-call')
@@ -296,13 +235,9 @@ export class CallGateway implements OnGatewayConnection, OnGatewayDisconnect {
     },
   ) {
     client.leave(body.callId);
-
     this.roomService.leaveRoom(body.callId, client.id);
 
     const count = this.roomService.getParticipantCount(body.callId);
-
-    this.server.to(body.callId).emit('participant-left', {
-      participants: count,
-    });
+    this.server.to(body.callId).emit('participant-left', { participants: count });
   }
 }
