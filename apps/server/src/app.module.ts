@@ -9,6 +9,7 @@ import { CallModule } from './call/call.module';
 import { SocketModule } from './socket/socket.module';
 import { ApiKeyModule } from './api-key/api-key.module';
 import { CallSessionModule } from './call-session/call-session.module';
+import { TurnModule } from './turn/turn.module';
 
 @Module({
   imports: [
@@ -16,12 +17,13 @@ import { CallSessionModule } from './call-session/call-session.module';
       isGlobal: true,
     }),
     PrismaModule,
-     AuthModule,
-     ProjectModule,
-     CallModule,
-     SocketModule,
-     ApiKeyModule,
-     CallSessionModule
+    AuthModule,
+    ProjectModule,
+    CallModule,
+    SocketModule,
+    ApiKeyModule,
+    CallSessionModule,
+    TurnModule,
   ],
   controllers: [TestController],
 })

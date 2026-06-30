@@ -1,0 +1,23 @@
+services:
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    # Use host networking in production so coturn sees the real public IP.
+    # On macOS/Windows dev machines, use ports instead (host networking is a no-op there).
+    # network_mode: host
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/udp"
+      - "5349:5349/tcp"
+      # Relay port range — keep this consistent with min-port/max-port in turnserver.conf.
+      # Open these on your cloud firewall too.
+      - "49152-65535:49152-65535/udp"
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    # Secret is injected at runtime so it never sits in the config file
+    command: >
+      -c /etc/coturn/turnserver.conf
+      --static-auth-secret=${TURN_SECRET}
+    environment:
+      - TURN_SECRET=${TURN_SECRET}

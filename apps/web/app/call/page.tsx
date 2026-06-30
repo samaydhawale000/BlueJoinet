@@ -74,6 +74,7 @@ function CallPageContent() {
   const [incomingData, setIncomingData] = useState<IncomingCallData | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
   const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
 
@@ -81,6 +82,7 @@ function CallPageContent() {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
   const stateRef = useRef<CallState>('connecting');
 
   const duration = useDurationTimer(state === 'in-call');
@@ -89,17 +91,28 @@ function CallPageContent() {
     stateRef.current = state;
   }, [state]);
 
+  const fetchIceServers = useCallback(async (): Promise<RTCIceServer[]> => {
+    try {
+      const res = await fetch('http://localhost:3005/turn/credentials', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error();
+      const data = await res.json() as { iceServers: RTCIceServer[] };
+      return data.iceServers;
+    } catch {
+      return [{ urls: 'stun:stun.l.google.com:19302' }];
+    }
+  }, [token]);
+
   const initMedia = useCallback(async (video = true) => {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video,
-    });
+    const [stream, iceServers] = await Promise.all([
+      navigator.mediaDevices.getUserMedia({ audio: true, video }),
+      fetchIceServers(),
+    ]);
     localStreamRef.current = stream;
     if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-    });
+    const pc = new RTCPeerConnection({ iceServers });
 
     stream.getTracks().forEach((t) => pc.addTrack(t, stream));
 
@@ -124,10 +137,12 @@ function CallPageContent() {
   }, []);
 
   const cleanup = useCallback(() => {
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     pcRef.current?.close();
     pcRef.current = null;
     localStreamRef.current = null;
+    screenStreamRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -245,6 +260,45 @@ function CallPageContent() {
     if (!track) return;
     track.enabled = !track.enabled;
     setIsVideoOff(!track.enabled);
+  }
+
+  async function startScreenShare() {
+    try {
+      const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      const screenTrack = screenStream.getVideoTracks()[0];
+      screenStreamRef.current = screenStream;
+
+      // Replace video sender track with screen track
+      const sender = pcRef.current?.getSenders().find((s) => s.track?.kind === 'video');
+      if (sender) await sender.replaceTrack(screenTrack);
+
+      // Show screen in local PiP
+      if (localVideoRef.current) localVideoRef.current.srcObject = screenStream;
+
+      // When user stops via browser's native "Stop sharing" button
+      screenTrack.onended = () => stopScreenShare();
+
+      setIsScreenSharing(true);
+    } catch {
+      // User cancelled the picker — do nothing
+    }
+  }
+
+  async function stopScreenShare() {
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    screenStreamRef.current = null;
+
+    // Switch sender back to camera track
+    const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
+    const sender = pcRef.current?.getSenders().find((s) => s.track?.kind === 'video');
+    if (sender && cameraTrack) await sender.replaceTrack(cameraTrack);
+
+    // Restore camera in local PiP
+    if (localVideoRef.current && localStreamRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+    }
+
+    setIsScreenSharing(false);
   }
 
   // ── State screens ──────────────────────────────────────────
@@ -437,6 +491,17 @@ function CallPageContent() {
           </ControlButton>
         )}
 
+        {callType === 'VIDEO' && (
+          <ControlButton
+            active={isScreenSharing}
+            activeColor="#1E3A5F"
+            onClick={isScreenSharing ? stopScreenShare : startScreenShare}
+            label={isScreenSharing ? 'Stop share' : 'Share screen'}
+          >
+            <ScreenShareIcon active={isScreenSharing} />
+          </ControlButton>
+        )}
+
         <ControlButton
           active={true}
           activeColor="#7F1D1D"
@@ -575,6 +640,17 @@ function PhoneDownIcon() {
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#F87171" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-.85a2 2 0 0 1 2.11-.43 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.44-2.47M6.51 6.51A19.5 19.5 0 0 0 3.07 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 1.82 1.2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.44 2.08L6.51 8.8" />
       <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  );
+}
+
+function ScreenShareIcon({ active }: { active: boolean }) {
+  const stroke = active ? '#60A5FA' : '#94A3B8';
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <polyline points="8 21 12 17 16 21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
     </svg>
   );
 }
